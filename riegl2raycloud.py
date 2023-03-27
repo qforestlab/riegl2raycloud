@@ -4,12 +4,13 @@ import glob
 import csv
 import json
 import time
-import re
 
 import matplotlib.pyplot as plt
 import pdal
 import open3d as o3d
 import numpy as np
+
+from memory_profiler import profile
 
 OUT_DIR = "out"
 
@@ -67,6 +68,7 @@ def transform_rxp(rxp_array, matrix):
     matrix
         4x4 transformation matrix
     """
+
     xyz = rxp_array[['X', 'Y', 'Z']]
     # need to do this to convert tuples to arrays, there might be a faster way with .view or something
     xyz_np = np.array(xyz.tolist())
@@ -88,14 +90,15 @@ def transform_rxp(rxp_array, matrix):
 def read_rxps(project, pos_dict): 
     """
     Reads all rxp files in a project folder
-    Returns dict{ scanpos: array([[x,y,z], ..) }
+    Returns generator with scanpos, points
 
     Parameters
     ----------
     project
         .RISCAN folder
+    pos_dict
+        dictionary with .DAT matrices
     """
-    dct = {}
     for scanpos in sorted(os.listdir(os.path.join(project, 'SCANS'))): # TODO: temp slice, runs out of memory otherwise
         if scanpos not in pos_dict:
             print(f"Can't read rxp {scanpos} as not present in pos_dict, make sure .DAT files are generated before running (skipping)")
@@ -110,9 +113,8 @@ def read_rxps(project, pos_dict):
         pipeline = get_pipeline(rxp[0])
         
         points = transform_rxp(pipeline.arrays[0], pos_dict[scanpos])
-        dct[scanpos] = points
-
-    return dct
+        yield scanpos, points
+        del points # don't know if this actually does something but anyways
 
 def scanposfromdat(matrix):
     return matrix[:-1,-1]
@@ -149,15 +151,8 @@ def appendray(points, scanpos, time):
     pcd.point.time = o3d.core.Tensor( time, dtype_f64, device)
     return pcd
 
-def merge_pcs(pcs):
-    # set out to pc[0] first because merging empty pc gives error
-    out = pcs[0]
-    for pc in pcs[1:]:
-        # add to combined pc
-        out = out.append(pc)
-    return out
-
-def pc2rc(pos_dict, point_dict, out_dir, args):
+@profile
+def pc2rc(pos_dict, out_dir, args):
     """
     Converts pointclouds into rayclouds, and merges into one big .ply conforming to raycloudtools formatting
 
@@ -174,29 +169,33 @@ def pc2rc(pos_dict, point_dict, out_dir, args):
     if not os.path.exists(out_dir):
         os.makedirs(out_dir)
 
-    pcs = []
-    for pos in pos_dict:
-        if pos not in point_dict:
-            # print(f"Warning: points of scan position {pos} not found. Skipping")
-            continue
-        pcd = appendray(point_dict[pos], scanposfromdat(pos_dict[pos]), 1)
+    merged = None
+    # call generator function for rxps
+    for scanpos, points in read_rxps(args.project, pos_dict):
+        print(f"Processing position {scanpos}")
+        pcd = appendray(points, scanposfromdat(pos_dict[scanpos]), 1)
         # downsampling is done before merging, as otherwise normals (aka rays) are averaged in voxel
         if (args.resolution):
             pcd = pcd.voxel_down_sample(args.resolution)
-        pcs.append(pcd)
+        # ugly code but for some reason o3d errors when appending to empty pointcloud
+        if merged is None:
+            # copy contstuctor
+            merged = o3d.t.geometry.PointCloud(pcd)
+        else:
+            merged = merged.append(pcd)
         if(args.debug):
             # for debugging: also write single point clouds
             pos_dir = out_dir + "/pos/"
             if not os.path.exists(pos_dir):
                 os.makedirs(pos_dir)
-            filename = pos_dir+pos+"_raycloud.ply"
+            filename = pos_dir+scanpos+"_raycloud.ply"
             o3d.t.io.write_point_cloud( filename, pcd, write_ascii=False, compressed=False, print_progress=False)
-    
-    # downsample and merge point clouds
-    out_pc = merge_pcs(pcs)
-    o3d.t.io.write_point_cloud(out_dir + "merged_raycloud.ply", out_pc, write_ascii=False, compressed=False, print_progress=False)
+        del pcd, points
+    #write merged pointcloud
+    o3d.t.io.write_point_cloud(out_dir + "merged_raycloud.ply", merged, write_ascii=False, compressed=False, print_progress=False)
     return
 
+@profile
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-p", "--project", type=str, required=True)
@@ -211,25 +210,6 @@ def main():
         os._exit(1)
 
     pos_dict = read_dat(args.project)
-    
-    # change if using dat files
-    # extension = "CSV"
-    # result = glob.glob(args.project + '*.{}'.format(extension))
-
-    # if len(result) > 1 and extension == '.csv':
-    #     print("more then one csv file found, aborting")
-    #     os._exit(1)
-
-    # # change if using dat files
-    # pos_dict = read_csv(result[0])
-
-
-    print("Reading and converting rxp files")
-    t = time.process_time()
-    point_dict = read_rxps(args.project, pos_dict)
-    t2 = time.process_time()
-    print(f"Read and converted rxps in {(t2 - t):.2f} seconds")
-
 
     # get output folder from project name
     if (args.project[-1].endswith("/")):
@@ -242,7 +222,7 @@ def main():
         print("Converting raycloud without downsampling")
 
     t = time.process_time()
-    pc2rc(pos_dict, point_dict, out_dir, args)
+    pc2rc(pos_dict, out_dir, args)
     t2 = time.process_time()
     print(f"Converted pointclouds to rayclouds in {(t2 - t):.2f} seconds")
 

@@ -9,7 +9,8 @@ Optional parameters:
 First generate .DAT files for project using Registration > Multiple SOP Export > Export complete 4x4 matrix as *.DA in RiSCAN PRO.
 
 Tested using python 3.11 and Ubuntu 22.04 (WSL), using RiSCAN PRO 2.15.
+"Killed" message means that the process ran out of memory.
 
 ## TODO's
-- Read in .dat files to perform transformation
-- Decrease memory usage
+- Atempt to decrease memory usage further
+- Support for .riproject folders from vz400
