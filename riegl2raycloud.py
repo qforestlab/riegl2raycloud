@@ -22,8 +22,16 @@ def read_csv(file):
     return pos_dict
 
 def read_dat(folder):
-    for datfile in glob.glob(os.path.join(folder, "*.dat")):
-        print(datfile)
+    pos_dict = {}
+    for datfile in glob.glob(os.path.join(folder, "*.DAT")):
+        scanpos = os.path.splitext(os.path.basename(datfile))[0]
+        with open(datfile) as f:
+            mat = []
+            for line in f.readlines():
+                mat_row = [float(el) for el in line.split(' ')]
+                mat.append(mat_row)
+            pos_dict[scanpos] = np.array(mat)
+    return pos_dict
 
 def visualize(positions):
     plt.scatter([el[0] for el in positions.values()], [el[1] for el in positions.values()])
@@ -48,10 +56,39 @@ def get_pipeline(rxp_file):
 
     return pipeline
 
-def read_rxps(project): 
+def transform_rxp(rxp_array, matrix):
+    """
+    Returns numpy array with xyz's of rxp file transformed using .dat matrix
+
+    Parameters
+    ----------
+    rxp_array
+        array of tuples containing rxp data points
+    matrix
+        4x4 transformation matrix
+    """
+    xyz = rxp_array[['X', 'Y', 'Z']]
+    # need to do this to convert tuples to arrays, there might be a faster way with .view or something
+    xyz_np = np.array(xyz.tolist())
+
+    # append extra row of ones to make transform work
+    extra_dim = np.ones((xyz_np.shape[0],1))
+    xyz_np = np.hstack((xyz_np, extra_dim))
+    # transpose
+    xyz_np = np.transpose(xyz_np)
+    #perform transformation
+    xyz_np = np.matmul(matrix, xyz_np)
+    #retranspose to get nx4 array again
+    xyz_np = np.transpose(xyz_np)
+    # remove final column of 1's
+    xyz_np = xyz_np[:,:-1]
+
+    return xyz_np
+
+def read_rxps(project, pos_dict): 
     """
     Reads all rxp files in a project folder
-    Returns dict{ scanpos: array([x,y,z,...]) }
+    Returns dict{ scanpos: array([[x,y,z], ..) }
 
     Parameters
     ----------
@@ -60,10 +97,9 @@ def read_rxps(project):
     """
     dct = {}
     for scanpos in sorted(os.listdir(os.path.join(project, 'SCANS'))): # TODO: temp slice, runs out of memory otherwise
-        #TODO: TEMP: skip uneven
-        if int(re.findall(r'\d+', scanpos)[0]) not in [1, 61]:
+        if scanpos not in pos_dict:
+            print(f"Can't read rxp {scanpos} as not present in pos_dict, make sure .DAT files are generated before running (skipping)")
             continue
-        print(scanpos)
         rxp = glob.glob(os.path.join(project, 'SCANS', scanpos, '**/*_*.rxp'))
         # remove all the residual files
         rxp = [el for el in rxp if not 'residual' in el]
@@ -72,8 +108,14 @@ def read_rxps(project):
             print(f"Error for scanpos {scanpos}: rxp file not found (list = {rxp})")
             continue
         pipeline = get_pipeline(rxp[0])
-        dct[scanpos] = pipeline.arrays[0]
+        
+        points = transform_rxp(pipeline.arrays[0], pos_dict[scanpos])
+        dct[scanpos] = points
+
     return dct
+
+def scanposfromdat(matrix):
+    return matrix[:-1,-1]
 
 def appendray(points, scanpos, time):
     """"
@@ -94,13 +136,9 @@ def appendray(points, scanpos, time):
     dtype_f64 = o3d.core.float64
 
     pcd = o3d.t.geometry.PointCloud(device)
-    xyz = points[['X', 'Y', 'Z']]
 
-    # need to do this to convert tuples to arrays, there might be a faster way with .view or something
-    xyz_np = np.array(xyz.tolist())
-
-    pcd.point.positions = o3d.core.Tensor(xyz_np, dtype_f32, device)
-    n_points = len(xyz_np)
+    pcd.point.positions = o3d.core.Tensor(points, dtype_f32, device)
+    n_points = len(points)
 
     # append scanpos
     scanpos = np.repeat([scanpos], n_points, axis=0)
@@ -141,7 +179,7 @@ def pc2rc(pos_dict, point_dict, out_dir, args):
         if pos not in point_dict:
             # print(f"Warning: points of scan position {pos} not found. Skipping")
             continue
-        pcd = appendray(point_dict[pos], pos_dict[pos], 1)
+        pcd = appendray(point_dict[pos], scanposfromdat(pos_dict[pos]), 1)
         # downsampling is done before merging, as otherwise normals (aka rays) are averaged in voxel
         if (args.resolution):
             pcd = pcd.voxel_down_sample(args.resolution)
@@ -171,22 +209,24 @@ def main():
     if not os.path.exists(args.project):
         print("couldnt find folder")
         os._exit(1)
+
+    pos_dict = read_dat(args.project)
     
     # change if using dat files
-    extension = "CSV"
-    result = glob.glob(args.project + '*.{}'.format(extension))
+    # extension = "CSV"
+    # result = glob.glob(args.project + '*.{}'.format(extension))
 
-    if len(result) > 1 and extension == '.csv':
-        print("more then one csv file found, aborting")
-        os._exit(1)
+    # if len(result) > 1 and extension == '.csv':
+    #     print("more then one csv file found, aborting")
+    #     os._exit(1)
 
-    # change if using dat files
-    pos_dict = read_csv(result[0])
+    # # change if using dat files
+    # pos_dict = read_csv(result[0])
 
 
     print("Reading and converting rxp files")
     t = time.process_time()
-    point_dict = read_rxps(args.project)
+    point_dict = read_rxps(args.project, pos_dict)
     t2 = time.process_time()
     print(f"Read and converted rxps in {(t2 - t):.2f} seconds")
 
@@ -207,7 +247,6 @@ def main():
     print(f"Converted pointclouds to rayclouds in {(t2 - t):.2f} seconds")
 
     return
-
 
 
 if __name__ == "__main__":
