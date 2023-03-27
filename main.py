@@ -21,9 +21,6 @@ def read_csv(file):
             pos_dict[row[0]] = [float(i) for i in row[1:]]
     return pos_dict
 
-def read_dat(folder):
-    for datfile in glob.glob(os.path.join(folder, '*.dat')):
-        print(datfile)
 
 def visualize(positions):
     plt.scatter([el[0] for el in positions.values()], [el[1] for el in positions.values()])
