@@ -53,7 +53,6 @@ def get_pipeline(rxp_file):
 
     dmp = json.dumps(cmds)
     pipeline = pdal.Pipeline(dmp)
-    pipeline.execute()
 
     return pipeline
 
@@ -99,7 +98,7 @@ def read_rxps(project, pos_dict):
     pos_dict
         dictionary with .DAT matrices
     """
-    for scanpos in sorted(os.listdir(os.path.join(project, 'SCANS'))): # TODO: temp slice, runs out of memory otherwise
+    for scanpos in sorted(os.listdir(os.path.join(project, 'SCANS'))):
         if scanpos not in pos_dict:
             print(f"Can't read rxp {scanpos} as not present in pos_dict, make sure .DAT files are generated before running (skipping)")
             continue
@@ -110,9 +109,14 @@ def read_rxps(project, pos_dict):
         if len(rxp) != 1:
             print(f"Error for scanpos {scanpos}: rxp file not found (list = {rxp})")
             continue
+
+        # get and execute pdal pipeline
         pipeline = get_pipeline(rxp[0])
+        pipeline.execute()
         
+        # transform using DAT files into 1 coordinate system
         points = transform_rxp(pipeline.arrays[0], pos_dict[scanpos])
+        
         yield scanpos, points
         del points # don't know if this actually does something but anyways
 
@@ -151,7 +155,6 @@ def appendray(points, scanpos, time):
     pcd.point.time = o3d.core.Tensor( time, dtype_f64, device)
     return pcd
 
-@profile
 def pc2rc(pos_dict, out_dir, args):
     """
     Converts pointclouds into rayclouds, and merges into one big .ply conforming to raycloudtools formatting
