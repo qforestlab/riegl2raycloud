@@ -12,6 +12,8 @@ import numpy as np
 
 from memory_profiler import profile
 
+from boundingrectangle import boundingrectangle
+
 OUT_DIR = "out"
 
 def read_csv(file):
@@ -34,11 +36,16 @@ def read_dat(folder):
             pos_dict[scanpos] = np.array(mat)
     return pos_dict
 
-def visualize(positions):
-    plt.scatter([el[0] for el in positions.values()], [el[1] for el in positions.values()])
+def plot_dat_positions(positions, visualisation: bool = False, out_dir = None):
+    plt.scatter([scanposfromdat(el)[0] for el in positions.values()], [scanposfromdat(el)[1] for el in positions.values()])
     for txt in positions:
-        plt.annotate(txt, (positions[txt][0], positions[txt][1] + 1))
-    plt.show()
+        plt.annotate(txt, (scanposfromdat(positions[txt])[0], scanposfromdat(positions[txt])[1] + 1))
+    if out_dir:
+        if not os.path.exists(out_dir):
+            os.makedirs(out_dir)
+        plt.savefig(os.path.join(out_dir, "PlotScanpositions.png"))
+    if visualisation:
+        plt.show()
     return
 
 def get_pipeline(rxp_file):
@@ -98,7 +105,7 @@ def read_rxps(project, pos_dict):
     pos_dict
         dictionary with .DAT matrices
     """
-    for scanpos in sorted(os.listdir(os.path.join(project, 'SCANS'))):
+    for scanpos in sorted(os.listdir(os.path.join(project, 'SCANS'))): # TODO: temp slice for laptop memory reasons
         if scanpos not in pos_dict:
             print(f"Can't read rxp {scanpos} as not present in pos_dict, make sure .DAT files are generated before running (skipping)")
             continue
@@ -123,8 +130,8 @@ def read_rxps(project, pos_dict):
 def scanposfromdat(matrix):
     return matrix[:-1,-1]
 
-def appendray(points, scanpos, time):
-    """"
+def appendray(points, scanpos, time) -> o3d.t.geometry.PointCloud:
+    """
     Returns o3d Pointcloud with scanposition coordinates saved in normal field and appended time field
     
     Parameters
@@ -158,13 +165,12 @@ def appendray(points, scanpos, time):
 def pc2rc(pos_dict, out_dir, args):
     """
     Converts pointclouds into rayclouds, and merges into one big .ply conforming to raycloudtools formatting
+    Also crops the pointcloud to bounding rectangle with buffer
 
     Parameters
     ----------
     pos_dict
         dictionary with scanner positions: {"ScanPosXX" -> [x, y, z]}
-    point_dict
-        dictionary with converted rxp pointclouds: {"ScanPosXX" -> [[x, y, z, ...], ...]}
     out_dir
         path to output directory
     args
@@ -172,17 +178,42 @@ def pc2rc(pos_dict, out_dir, args):
     if not os.path.exists(out_dir):
         os.makedirs(out_dir)
 
+    # get bounding rectangle of scanpositions
+    positions = [scanposfromdat(el)[:2] for el in pos_dict.values()]
+
+    if len(positions) < 4:
+        print("Less then 4 positions found, not cropping with bounding rectangle")
+    else:
+        area, corners = boundingrectangle(positions, buffer=args.edgebuffer, out_dir=out_dir)
+
+    # first create 03d pointcloud, then get bounding box from this pointcloud
+    # no direct way of getting bbox in current o3d
+    # also can't use inf because o3d complains, so use LARGE_Z (update when trees get larger then 1 million metres!)
+    LARGE_Z = 1000000
+
+    top_corners = np.hstack((corners, np.asarray([[LARGE_Z]]*4)))
+    bot_corners = np.hstack((corners, np.asarray([[-LARGE_Z]]*4)))
+
+    corners_pc = o3d.t.geometry.PointCloud(o3d.core.Tensor(np.vstack((top_corners, bot_corners))))
+
+    crop_bbox = corners_pc.get_oriented_bounding_box()
+
     merged = None
     # call generator function for rxps
     for scanpos, points in read_rxps(args.project, pos_dict):
         print(f"Processing position {scanpos}")
         pcd = appendray(points, scanposfromdat(pos_dict[scanpos]), 1)
+        # crop using bbox
+        print("Cropping")
+        pcd = pcd.crop(crop_bbox)
         # downsampling is done before merging, as otherwise normals (aka rays) are averaged in voxel
         if (args.resolution):
+            print("Downsampling")
             pcd = pcd.voxel_down_sample(args.resolution)
+        print("Merging")
         # ugly code but for some reason o3d errors when appending to empty pointcloud
         if merged is None:
-            # copy contstuctor
+            # copy constructor
             merged = o3d.t.geometry.PointCloud(pcd)
         else:
             merged = merged.append(pcd)
@@ -194,16 +225,21 @@ def pc2rc(pos_dict, out_dir, args):
             filename = pos_dir+scanpos+"_raycloud.ply"
             o3d.t.io.write_point_cloud( filename, pcd, write_ascii=False, compressed=False, print_progress=False)
         del pcd, points
+    # TODO: tiling
     #write merged pointcloud
-    o3d.t.io.write_point_cloud(out_dir + "merged_raycloud.ply", merged, write_ascii=False, compressed=False, print_progress=False)
+    print("Writing merged pointcloud")
+    o3d.t.io.write_point_cloud(os.path.join(out_dir, "merged_raycloud.ply"), merged, write_ascii=False, compressed=False, print_progress=False)
     return
 
-@profile
+# @profile
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-p", "--project", type=str, required=True)
     parser.add_argument("--debug", action='store_true')
     parser.add_argument("-r", "--resolution", type=float)
+    parser.add_argument("-b", "--edgebuffer", type=int)
+    parser.add_argument("-t", "--tilebuffer", type=int)
+    parser.add_argument("-n", "-ntile", type=int)
     print("")
 
     args = parser.parse_args()
@@ -215,14 +251,12 @@ def main():
     pos_dict = read_dat(args.project)
 
     # get output folder from project name
-    if (args.project[-1].endswith("/")):
+    if (args.project.endswith("/")):
         args.project = args.project[:len(args.project) -1]
-    out_dir = "out/" + os.path.splitext(os.path.basename(args.project))[0] + "/"
+    out_dir = os.path.join("out", os.path.splitext(os.path.basename(args.project))[0])
 
-    if (args.resolution):
-        print(f"Downsampling to resolution {args.resolution:.2f} and converting pointclouds to rayclouds")
-    else:
-        print("Converting raycloud without downsampling")
+    print("Converting raycloud without downsampling")
+    plot_dat_positions(pos_dict, out_dir=out_dir)
 
     t = time.process_time()
     pc2rc(pos_dict, out_dir, args)
