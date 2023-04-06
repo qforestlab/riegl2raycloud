@@ -10,9 +10,8 @@ import pdal
 import open3d as o3d
 import numpy as np
 
-from memory_profiler import profile
-
 from boundingrectangle import boundingrectangle
+from tile import tile_from_corner_points
 
 OUT_DIR = "out"
 
@@ -184,15 +183,15 @@ def pc2rc(pos_dict, out_dir, args):
     if len(positions) < 4:
         print("Less then 4 positions found, not cropping with bounding rectangle")
     else:
-        area, corners = boundingrectangle(positions, buffer=args.edgebuffer, out_dir=out_dir)
+        area, bbox_xy_corners = boundingrectangle(positions, buffer=args.edgebuffer, out_dir=out_dir)
 
     # first create 03d pointcloud, then get bounding box from this pointcloud
     # no direct way of getting bbox in current o3d
     # also can't use inf because o3d complains, so use LARGE_Z (update when trees get larger then 1 million metres!)
     LARGE_Z = 1000000
 
-    top_corners = np.hstack((corners, np.asarray([[LARGE_Z]]*4)))
-    bot_corners = np.hstack((corners, np.asarray([[-LARGE_Z]]*4)))
+    top_corners = np.hstack((bbox_xy_corners, np.asarray([[LARGE_Z]]*4)))
+    bot_corners = np.hstack((bbox_xy_corners, np.asarray([[-LARGE_Z]]*4)))
 
     corners_pc = o3d.t.geometry.PointCloud(o3d.core.Tensor(np.vstack((top_corners, bot_corners))))
 
@@ -225,7 +224,18 @@ def pc2rc(pos_dict, out_dir, args):
             filename = pos_dir+scanpos+"_raycloud.ply"
             o3d.t.io.write_point_cloud( filename, pcd, write_ascii=False, compressed=False, print_progress=False)
         del pcd, points
-    # TODO: tiling
+    
+    print("Tiling merged point cloud")
+    # Tile based on corners forming rectangle
+    tile_out_dir = os.path.join(out_dir, "tiled")
+    if not os.path.exists(tile_out_dir):
+        os.makedirs(out_dir)
+
+    tiles = tile_from_corner_points(bbox_xy_corners, merged, size=args.tilesize, buffer=args.tilebuffer, exact_size=args.exact_tiles, visualization=False, out_dir=tile_out_dir)
+
+    for i, tile in enumerate(tiles):
+        o3d.io.write_point_cloud(out_dir+"Tile"+str(i)+".ply", tile)
+    
     #write merged pointcloud
     print("Writing merged pointcloud")
     o3d.t.io.write_point_cloud(os.path.join(out_dir, "merged_raycloud.ply"), merged, write_ascii=False, compressed=False, print_progress=False)
@@ -237,9 +247,11 @@ def main():
     parser.add_argument("-p", "--project", type=str, required=True)
     parser.add_argument("--debug", action='store_true')
     parser.add_argument("-r", "--resolution", type=float)
-    parser.add_argument("-b", "--edgebuffer", type=int)
-    parser.add_argument("-t", "--tilebuffer", type=int)
-    parser.add_argument("-n", "-ntile", type=int)
+    # tile related
+    parser.add_argument("-b", "--edgebuffer", type=int, default=5)
+    parser.add_argument("-t", "--tilebuffer", type=int, default=2)
+    parser.add_argument("-s", "--tilesize", type=int, default=20)
+    parser.add_argument("--exact_tiles", action='store_true')
     print("")
 
     args = parser.parse_args()
