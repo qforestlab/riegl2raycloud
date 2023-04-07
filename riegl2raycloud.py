@@ -229,7 +229,7 @@ def pc2rc(pos_dict, out_dir, args):
     # Tile based on corners forming rectangle
     tile_out_dir = os.path.join(out_dir, "tiled")
     if not os.path.exists(tile_out_dir):
-        os.makedirs(out_dir)
+        os.makedirs(tile_out_dir)
 
     tiles = tile_from_corner_points(bbox_xy_corners, merged, size=args.tilesize, buffer=args.tilebuffer, exact_size=args.exact_tiles, visualization=False, out_dir=tile_out_dir)
 
@@ -267,7 +267,7 @@ def main():
         args.project = args.project[:len(args.project) -1]
     out_dir = os.path.join("out", os.path.splitext(os.path.basename(args.project))[0])
 
-    print("Converting raycloud without downsampling")
+    print("Converting raycloud")
     plot_dat_positions(pos_dict, out_dir=out_dir)
 
     t = time.process_time()
