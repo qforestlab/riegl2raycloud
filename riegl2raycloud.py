@@ -234,7 +234,7 @@ def pc2rc(pos_dict, out_dir, args):
     tiles = tile_from_corner_points(bbox_xy_corners, merged, size=args.tilesize, buffer=args.tilebuffer, exact_size=args.exact_tiles, visualization=False, out_dir=tile_out_dir)
 
     for i, tile in enumerate(tiles):
-        o3d.io.write_point_cloud(out_dir+"Tile"+str(i)+".ply", tile)
+        o3d.t.io.write_point_cloud(os.path.join(tile_out_dir,"Tile"+str(i)+".ply"), tile, write_ascii=False, compressed=False, print_progress=False)
     
     #write merged pointcloud
     print("Writing merged pointcloud")
