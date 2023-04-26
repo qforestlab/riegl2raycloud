@@ -85,8 +85,8 @@ def tile_from_corner_points(corners, pc: Union[str, o3d.geometry.PointCloud, o3d
 
         tiled_pcs.append(cropped_pc)
     
-    if (visualization or out_dir) :
-        visualize_rectangles([corners, *tiles, rotated_corners, *rotated_tiles], visualization=visualization, out_dir=out_dir)
+    if (visualization or out_dir):
+        visualize_rectangles([corners, *tiles], visualization=visualization, out_dir=out_dir)
 
     return tiled_pcs
 
@@ -171,7 +171,7 @@ def visualize_rectangles(rectangles, visualization:bool = False, out_dir: str = 
         plt.annotate("T" + str(j), xy= ((max_x + min_x)/2, (max_y + min_y)/2))
     if out_dir:
         if not os.path.exists(out_dir):
-                print("Cant find location {out_dir} to save Tiles")
+                print("Cant find location {out_dir} to save Tiles.png")
         else:
             plt.savefig(os.path.join(out_dir,"Tiles.png"))
     if visualization:
