@@ -2,11 +2,12 @@ from typing import Union
 import os
 import math as m
 import numpy as np
+import matplotlib.pyplot as plt
 
 import open3d as o3d
 
 from boundingrectangle import boundingrectangle
-import matplotlib.pyplot as plt
+
 
 def tile_from_corner_points(corners, pc: Union[str, o3d.geometry.PointCloud, o3d.t.geometry.PointCloud], size: int = 10, buffer:int = None, exact_size: bool = False, visualization: bool = False, out_dir: str = None):
     """
@@ -89,51 +90,6 @@ def tile_from_corner_points(corners, pc: Union[str, o3d.geometry.PointCloud, o3d
 
     return tiled_pcs
 
-def tile_o3d_xy(pc: Union[str, o3d.geometry.PointCloud, o3d.t.geometry.PointCloud], size: int = 10, buffer: int = None, edge_buffer: int = None, exact_size: bool = False, visualization: bool = False, out_dir: str = None):
-    """
-    Tiles pointcloud into tiles of given size, by projecting all points onto xy, finding smallest bounding rectangle and tiling on this rectangle
-
-    The bool exact_size indicates wether exact given size is used: 
-        if True exact squares will be made and any left over parts will be smaller tiles.
-        if False the closest length to divide each side into exact squares will be used.
-    Parameters
-    ----------
-    pc
-        May be string with path to pointcloud, or o3d.(t) PointCloud object
-    size
-        Size of one side of tile in metres 
-    (optional) buffer
-        Buffer in meters to add to each tile border
-    (optional) exact_size
-        Wether to use exact given tile size
-    (optional) visualization
-        Visualization of tiles
-    (optional) out_dir
-        out_dir to save visualization of tiles
-    """
-
-    if isinstance(pc, str):
-        if not os.path.exists(pc):
-            print(f"Can't find file at location {pc}")
-            return
-        pcd = o3d.io.read_point_cloud(pc)
-        xy_points = np.asarray(pcd.points)[:, :2]
-    elif isinstance(pc, o3d.geometry.PointCloud):
-        pcd = pc
-        xy_points = np.asarray(pcd.points)
-    elif isinstance(pc, o3d.t.geometry.PointCloud):
-        pcd = pc
-        xy_points = pcd.point.positions.numpy()[:, :2]
-    else:
-        print(f"Can't read pointcloud {pc}")
-        return None
-    if not buffer:
-        buffer = 0
-
-    _, corners = boundingrectangle(xy_points, edge_buffer)
-
-    return tile_from_corner_points(corners, pcd, size=size, buffer=buffer, exact_size=exact_size, visualization=visualization, out_dir=out_dir)
-
 def create_tiles_aligned_corners(corner_points, size, buffer, exact):
     """
     Tiles rectangle with tiles of given size and given overlap
@@ -183,10 +139,9 @@ def create_tiles_aligned_corners(corner_points, size, buffer, exact):
         n_tiles = np.where(n_tiles == 0, 1, n_tiles)
         sizes = (lengths - buffer) / np.round(n_tiles) + buffer
         print(f"Actual sizes used: x: {sizes[0]}, y: {sizes[1]}")
-        tiles_xy = np.divide(lengths, sizes)
         # bottom left corners
-        x_crnrs = [(min[0] + i*(sizes[0]-buffer)) for i in range(int(tiles_xy[0]))]
-        y_crnrs = [(min[1] + i*(sizes[1]-buffer)) for i in range(int(tiles_xy[1]))]
+        x_crnrs = [(min[0] + i*(sizes[0]-buffer)) for i in range(int(np.round(n_tiles[0])))]
+        y_crnrs = [(min[1] + i*(sizes[1]-buffer)) for i in range(int(np.round(n_tiles[1])))]
         for i in range(len(x_crnrs)):
             for j in range(len(y_crnrs)):
                 tiles.append([[x_crnrs[i],y_crnrs[j]], [x_crnrs[i],y_crnrs[j] + sizes[1]],[x_crnrs[i] + sizes[0],y_crnrs[j]],[x_crnrs[i] + sizes[0],y_crnrs[j] + sizes[1]]])
@@ -216,8 +171,8 @@ def visualize_rectangles(rectangles, visualization:bool = False, out_dir: str = 
         plt.annotate("T" + str(j), xy= ((max_x + min_x)/2, (max_y + min_y)/2))
     if out_dir:
         if not os.path.exists(out_dir):
-                print("Cant find location {out_dir} to save Plotbounds")
+                print("Cant find location {out_dir} to save Tiles")
         else:
-            plt.savefig(os.path.join(out_dir,"PlotBounds.png"))
+            plt.savefig(os.path.join(out_dir,"Tiles.png"))
     if visualization:
         plt.show()
